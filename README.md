@@ -61,21 +61,74 @@ Generated A/B OTA ZIP (-o)
 
 ---
 
-## Installation & Building
+## Standalone Executables & Releases
 
-Clone the repository and compile using Cargo:
+Pre-compiled, standalone executables for all major platforms are published under [GitHub Releases](https://github.com/undead-reaper/pixel-factory-to-ota-rs/releases):
+
+| Platform | Target Architecture | Binary Packaging | Type |
+| :--- | :--- | :--- | :--- |
+| **Linux (Static)** | `x86_64-unknown-linux-musl` | `.tar.gz` | Standalone static executable (no glibc dependency) |
+| **Linux (Static ARM64)** | `aarch64-unknown-linux-musl` | `.tar.gz` | Standalone static executable |
+| **Linux (glibc)** | `x86_64-unknown-linux-gnu` | `.tar.gz` | Standalone executable |
+| **Linux (glibc ARM64)**| `aarch64-unknown-linux-gnu` | `.tar.gz` | Standalone executable |
+| **macOS (Universal)** | `universal-apple-darwin` | `.tar.gz` | Universal binary (Apple Silicon M1–M4 & Intel x86_64) |
+| **Windows (x64)** | `x86_64-pc-windows-msvc` | `.zip` | Standalone `pixel-factory-to-ota.exe` |
+| **Windows (ARM64)** | `aarch64-pc-windows-msvc` | `.zip` | Standalone `pixel-factory-to-ota.exe` |
+
+> [!NOTE]
+> `avbroot` and `afsr` are external runtime dependencies that must be installed and accessible in `PATH`. They are intentionally not bundled into the binary to maintain clean separation of concerns and allow independent updates of the underlying Android tooling.
+
+---
+
+## Building from Source
+
+### Standalone Release Build
+
+To produce a stripped, LTO-optimized release binary:
 
 ```bash
 cargo build --release
 ```
 
-The resulting binary will be located at `target/release/pixel-factory-to-ota`.
+The resulting binary will be at `target/release/pixel-factory-to-ota`.
+
+### Host CPU Optimized Build (e.g. CachyOS / Arch)
+
+To maximize performance for your local CPU:
+
+```bash
+RUSTFLAGS="-C target-cpu=native" cargo build --release
+```
+
+Or using the bundled build helper script:
+
+```bash
+./scripts/build.sh native
+```
+
+### Fully Static Linux Executable (musl)
+
+To compile a 100% statically linked standalone Linux executable with zero dynamic glibc dependencies:
+
+```bash
+rustup target add x86_64-unknown-linux-musl
+cargo build --release --target x86_64-unknown-linux-musl
+```
+
+Or using the helper script:
+
+```bash
+./scripts/build.sh musl
+```
+
+### Install via Cargo
 
 To install into your user Cargo binary directory (`~/.cargo/bin`):
 
 ```bash
 cargo install --path .
 ```
+
 
 ---
 

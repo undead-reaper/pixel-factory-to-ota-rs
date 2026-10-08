@@ -21,7 +21,7 @@ jobs:
         with:
           components: rustfmt, clippy
 
-      - name: Install Protoc
+      - name: Install Protoc & System Tools
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
 
       - name: Check Formatting
@@ -34,15 +34,20 @@ jobs:
         run: cargo clippy --all-targets --all-features -- -D warnings
 
   test:
-    name: Test Suite
-    runs-on: ubuntu-latest
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install Protoc & Filesystem Tools
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler e2fsprogs
 
       - name: Run Tests

@@ -17,3 +17,12 @@ zip = { version = "8.6", default-features = false, features = ["deflate", "time"
 
 [build-dependencies]
 prost-build = "0.14"
+protoc-bin-vendored = "3.3.0"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+

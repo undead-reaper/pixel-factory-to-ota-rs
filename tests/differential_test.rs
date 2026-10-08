@@ -14,11 +14,12 @@ use zip::write::SimpleFileOptions;
 use zip::{ZipArchive, ZipWriter};
 
 fn has_tool(name: &str) -> bool {
-    Command::new("which")
-        .arg(name)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    #[cfg(windows)]
+    let res = Command::new("where").arg(name).output();
+    #[cfg(not(windows))]
+    let res = Command::new("which").arg(name).output();
+
+    res.map(|o| o.status.success()).unwrap_or(false)
 }
 
 fn make_appended_avb(raw_path: &Path, out_path: &Path, part_name: &str, fp: &str) {

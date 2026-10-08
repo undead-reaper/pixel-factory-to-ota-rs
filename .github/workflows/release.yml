@@ -1,0 +1,229 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (leave empty for current ref)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  # =========================================================================
+  # 1. PRE-RELEASE TESTS: Tests must pass on all platforms before builds
+  # =========================================================================
+  test:
+    name: Pre-Release Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install Linux test dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler e2fsprogs
+
+      - name: Run Test Suite
+        run: cargo test --verbose
+
+  # =========================================================================
+  # 2. BUILD STANDALONE EXECUTABLES FOR ALL PLATFORMS
+  # =========================================================================
+  build:
+    name: Build Standalone (${{ matrix.name }})
+    needs: [test]
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux x86_64 GNU
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            name: x86_64-unknown-linux-gnu
+            format: tar.gz
+
+          # Linux x86_64 MUSL (Fully Static)
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            name: x86_64-unknown-linux-musl
+            format: tar.gz
+            musl: true
+
+          # Linux ARM64 GNU
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            name: aarch64-unknown-linux-gnu
+            format: tar.gz
+
+          # Linux ARM64 MUSL (Fully Static)
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-musl
+            name: aarch64-unknown-linux-musl
+            format: tar.gz
+            musl: true
+
+          # macOS Universal (Native support for both Apple Silicon & Intel)
+          - os: macos-latest
+            target: universal-apple-darwin
+            name: universal-apple-darwin
+            format: tar.gz
+            macos_universal: true
+
+          # Windows x86_64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            name: x86_64-pc-windows-msvc
+            format: zip
+
+          # Windows ARM64
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+            name: aarch64-pc-windows-msvc
+            format: zip
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install musl-tools
+        if: matrix.musl
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: Determine Release Tag
+        shell: bash
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          else
+            TAG="v$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
+          fi
+          echo "RELEASE_TAG=${TAG}" >> "${GITHUB_ENV}"
+
+      # Build: macOS Universal Binary
+      - name: Build macOS Universal Binary
+        if: matrix.macos_universal
+        run: |
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          cargo build --release --target aarch64-apple-darwin
+          cargo build --release --target x86_64-apple-darwin
+          mkdir -p target/universal-apple-darwin/release
+          lipo -create -output target/universal-apple-darwin/release/pixel-factory-to-ota \
+            target/aarch64-apple-darwin/release/pixel-factory-to-ota \
+            target/x86_64-apple-darwin/release/pixel-factory-to-ota
+
+      # Build: Standard Targets (Linux & Windows)
+      - name: Build Target
+        if: ${{ !matrix.macos_universal }}
+        run: |
+          rustup target add ${{ matrix.target }}
+          cargo build --release --target ${{ matrix.target }}
+
+      # Package Unix (.tar.gz)
+      - name: Package Unix Archive
+        if: matrix.format == 'tar.gz'
+        shell: bash
+        run: |
+          ARCHIVE_NAME="pixel-factory-to-ota-${RELEASE_TAG}-${{ matrix.name }}"
+          BIN_PATH="target/${{ matrix.target }}/release/pixel-factory-to-ota"
+          mkdir -p "pkg/${ARCHIVE_NAME}"
+          cp "${BIN_PATH}" "pkg/${ARCHIVE_NAME}/"
+          cp README.md LICENSE "pkg/${ARCHIVE_NAME}/"
+          tar -czvf "${ARCHIVE_NAME}.tar.gz" -C pkg "${ARCHIVE_NAME}"
+          sha256sum "${ARCHIVE_NAME}.tar.gz" > "${ARCHIVE_NAME}.tar.gz.sha256"
+
+      # Package Windows (.zip)
+      - name: Package Windows Archive
+        if: matrix.format == 'zip'
+        shell: pwsh
+        run: |
+          $archiveName = "pixel-factory-to-ota-$env:RELEASE_TAG-${{ matrix.name }}"
+          $binPath = "target/${{ matrix.target }}/release/pixel-factory-to-ota.exe"
+          New-Item -ItemType Directory -Path "pkg/$archiveName" -Force
+          Copy-Item "$binPath" "pkg/$archiveName/"
+          Copy-Item README.md, LICENSE "pkg/$archiveName/"
+          Compress-Archive -Path "pkg/$archiveName" -DestinationPath "$archiveName.zip" -Force
+          $hash = (Get-FileHash -Path "$archiveName.zip" -Algorithm SHA256).Hash.ToLower()
+          "$hash  $archiveName.zip" | Out-File -Encoding ascii "$archiveName.zip.sha256"
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-${{ matrix.name }}
+          path: |
+            *.tar.gz
+            *.tar.gz.sha256
+            *.zip
+            *.zip.sha256
+
+  # =========================================================================
+  # 3. CREATE GITHUB RELEASE WITH ALL EXECUTABLES & SHA256 SUMS
+  # =========================================================================
+  create-release:
+    name: Publish GitHub Release
+    needs: [build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: 'artifacts-*'
+          path: release-assets
+          merge-multiple: true
+
+      - name: Generate Consolidated Checksums
+        working-directory: release-assets
+        run: |
+          sha256sum *.tar.gz *.zip > SHA256SUMS.txt
+          echo "=== SHA256 CHECKSUMS ==="
+          cat SHA256SUMS.txt
+
+      - name: Determine Release Tag
+        id: get_tag
+        run: |
+          if [ -n "${{ github.event.inputs.tag }}" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          elif [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF#refs/tags/}"
+          else
+            TAG="v$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
+          fi
+          echo "tag=${TAG}" >> "${GITHUB_OUTPUT}"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.get_tag.outputs.tag }}
+          name: Release ${{ steps.get_tag.outputs.tag }}
+          files: |
+            release-assets/*.tar.gz
+            release-assets/*.tar.gz.sha256
+            release-assets/*.zip
+            release-assets/*.zip.sha256
+            release-assets/SHA256SUMS.txt
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

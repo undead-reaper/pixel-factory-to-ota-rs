@@ -1,0 +1,11 @@
+[alias]
+# Convenient cargo alias to build host-optimized standalone release executable
+build-native = "build --release"
+# Build 100% static standalone musl binary for Linux x86_64
+build-musl = "build --release --target x86_64-unknown-linux-musl"
+
+[target.x86_64-unknown-linux-musl]
+rustflags = ["-C", "target-feature=+crt-static"]
+
+[target.aarch64-unknown-linux-musl]
+rustflags = ["-C", "target-feature=+crt-static"]

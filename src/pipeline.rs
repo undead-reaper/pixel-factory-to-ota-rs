@@ -90,6 +90,7 @@ pub fn generate_ota(input_factory: &Path, output_ota: &Path, work_dir: &Path) ->
 
     if !ota_key.exists() {
         let abs_ota_key = to_absolute(&ota_key)?;
+        let dev_null = if cfg!(windows) { "NUL" } else { "/dev/null" };
         cmd(
             [
                 "avbroot".as_ref(),
@@ -100,7 +101,7 @@ pub fn generate_ota(input_factory: &Path, output_ota: &Path, work_dir: &Path) ->
                 "-o".as_ref(),
                 abs_ota_key.as_os_str(),
                 "--pass-file".as_ref(),
-                "/dev/null".as_ref(),
+                dev_null.as_ref(),
             ],
             None,
         )?;
